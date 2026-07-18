@@ -54,9 +54,7 @@ interface AuthRequest extends Request {
   };
 }
 
-// --- 🔒 Better Auth Token Middleware ---
-// --- 🔒 Better Auth Token Middleware (Updated & Fixed) ---
-// --- 🔒 Better Auth Token Middleware (Ultra-Flexible Fix) ---
+// --- 🔒 Better Auth Token Middleware (TypeScript & Serverless Fixed) ---
 const authenticateToken = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const authHeader = req.headers['authorization'];
@@ -67,8 +65,18 @@ const authenticateToken = async (req: AuthRequest, res: Response, next: NextFunc
       return;
     }
 
-    // ১. ডাটাবেজের 'session' কালেকশনে টোকেন চেক
-    const sessionDoc = await mongoose.connection.db.collection('session').findOne({ token: token });
+    // 🌟 TypeScript & Serverless Fix: ডাটাবেজ কানেকশন চেক ও এসাইনমেন্ট
+    const db = mongoose.connection.db;
+    if (!db) {
+      res.status(500).json({
+        success: false,
+        error: 'Database connection is not ready or active. Please retry.'
+      });
+      return;
+    }
+
+    // ১. ডাটাবেজের 'session' কালেকশনে টোকেন চেক (db ভ্যারিয়েবল ব্যবহার করে)
+    const sessionDoc = await db.collection('session').findOne({ token: token });
 
     if (!sessionDoc) {
       res.status(403).json({ success: false, error: 'Invalid token or session expired.' });
@@ -81,8 +89,7 @@ const authenticateToken = async (req: AuthRequest, res: Response, next: NextFunc
       return;
     }
 
-    // ২. সেশনের userId দিয়ে 'user' কালেকশন থেকে ডাটা রিড করা
-    // স্ট্রিং আইডি এবং মঙ্গো অবজেক্ট আইডি সব ফরম্যাট একসাথে চেক করবে যেন কোনো কনফ্লিক্ট না হয়
+    // ২. সেশনের userId দিয়ে 'user' কালেকশন থেকে ডাটা রিড করা
     const searchUserId = sessionDoc.userId.toString();
     let userObjectId: any = null;
 
@@ -94,7 +101,8 @@ const authenticateToken = async (req: AuthRequest, res: Response, next: NextFunc
       // Ignore conversion error
     }
 
-    const userDoc = await mongoose.connection.db.collection('user').findOne({
+    // (db ভ্যারিয়েবল ব্যবহার করে কুয়েরি)
+    const userDoc = await db.collection('user').findOne({
       $or: [
         { _id: searchUserId },
         ...(userObjectId ? [{ _id: userObjectId }] : []),
