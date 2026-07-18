@@ -12,7 +12,12 @@ dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 5000;
 // Middleware
-app.use((0, cors_1.default)());
+app.use((0, cors_1.default)({
+    origin: 'https://construct-iq-ai.vercel.app',
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie']
+}));
 app.use(express_1.default.json());
 // Initialize Groq AI
 const groq = new groq_sdk_1.Groq({ apiKey: process.env.GROQ_API_KEY });
@@ -39,9 +44,7 @@ const Session = mongoose_1.default.model('Session', SessionSchema);
 // Better Auth এর ইউজার স্কিমা
 const UserSchema = new mongoose_1.default.Schema({}, { strict: false, collection: 'user' });
 const User = mongoose_1.default.model('User', UserSchema);
-// --- 🔒 Better Auth Token Middleware ---
-// --- 🔒 Better Auth Token Middleware (Updated & Fixed) ---
-// --- 🔒 Better Auth Token Middleware (Ultra-Flexible Fix) ---
+// --- 🔒 Better Auth Token Middleware (TypeScript & Serverless Fixed) ---
 const authenticateToken = async (req, res, next) => {
     try {
         const authHeader = req.headers['authorization'];
@@ -50,8 +53,17 @@ const authenticateToken = async (req, res, next) => {
             res.status(401).json({ success: false, error: 'Access denied. No token provided.' });
             return;
         }
-        // ১. ডাটাবেজের 'session' কালেকশনে টোকেন চেক
-        const sessionDoc = await mongoose_1.default.connection.db.collection('session').findOne({ token: token });
+        // 🌟 TypeScript & Serverless Fix: ডাটাবেজ কানেকশন চেক ও এসাইনমেন্ট
+        const db = mongoose_1.default.connection.db;
+        if (!db) {
+            res.status(500).json({
+                success: false,
+                error: 'Database connection is not ready or active. Please retry.'
+            });
+            return;
+        }
+        // ১. ডাটাবেজের 'session' কালেকশনে টোকেন চেক (db ভ্যারিয়েবল ব্যবহার করে)
+        const sessionDoc = await db.collection('session').findOne({ token: token });
         if (!sessionDoc) {
             res.status(403).json({ success: false, error: 'Invalid token or session expired.' });
             return;
@@ -61,8 +73,7 @@ const authenticateToken = async (req, res, next) => {
             res.status(403).json({ success: false, error: 'Session has expired.' });
             return;
         }
-        // ২. সেশনের userId দিয়ে 'user' কালেকশন থেকে ডাটা রিড করা
-        // স্ট্রিং আইডি এবং মঙ্গো অবজেক্ট আইডি সব ফরম্যাট একসাথে চেক করবে যেন কোনো কনফ্লিক্ট না হয়
+        // ২. সেশনের userId দিয়ে 'user' কালেকশন থেকে ডাটা রিড করা
         const searchUserId = sessionDoc.userId.toString();
         let userObjectId = null;
         try {
@@ -73,7 +84,8 @@ const authenticateToken = async (req, res, next) => {
         catch (e) {
             // Ignore conversion error
         }
-        const userDoc = await mongoose_1.default.connection.db.collection('user').findOne({
+        // (db ভ্যারিয়েবল ব্যবহার করে কুয়েরি)
+        const userDoc = await db.collection('user').findOne({
             $or: [
                 { _id: searchUserId },
                 ...(userObjectId ? [{ _id: userObjectId }] : []),
