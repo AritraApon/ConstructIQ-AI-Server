@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors({
-  origin: 'https://construct-iq-ai.vercel.app', 
+  origin: 'https://construct-iq-ai.vercel.app',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Cookie']
@@ -21,15 +21,35 @@ app.use(express.json());
 // Initialize Groq AI
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI as string, {
-  dbName: 'ConstructIQ',
-})
-  .then(() => console.log('🚀 MongoDB Connected Successfully'))
-  .catch((err) => console.error('MongoDB Connection Error:', err));
+// 🌟 Serverless Connection Caching Logic
+let isConnected = false;
+
+const connectDB = async (): Promise<any> => {
+  if (isConnected && mongoose.connection.readyState === 1) {
+    return mongoose.connection.db;
+  }
+
+  try {
+    const dbUri = process.env.MONGODB_URI;
+    if (!dbUri) {
+      throw new Error('MONGODB_URI environment variable is missing.');
+    }
+
+    const con = await mongoose.connect(dbUri, {
+      dbName: 'ConstructIQ',
+      bufferCommands: false, // সার্ভারলেস এনভায়রনমেন্টের জন্য ফলস রাখা বেস্ট
+    });
+
+    isConnected = !!con.connections[0].readyState;
+    console.log('🚀 MongoDB Connected Successfully');
+    return con.connections[0].db;
+  } catch (err) {
+    console.error('MongoDB Connection Error:', err);
+    throw err;
+  }
+};
 
 // --- Mongoose Schemas & Models ---
-
 const ProjectSchema = new mongoose.Schema({
   title: { type: String, required: true },
   image: { type: String, required: true },
@@ -40,15 +60,8 @@ const ProjectSchema = new mongoose.Schema({
   userId: { type: String, required: true },
 }, { timestamps: true });
 
-const Project = mongoose.model('Project', ProjectSchema);
-
-// Better Auth এর সেশন স্কিমা (টোকেন চেক করার জন্য)
-const SessionSchema = new mongoose.Schema({}, { strict: false, collection: 'session' });
-const Session = mongoose.model('Session', SessionSchema);
-
-// Better Auth এর ইউজার স্কিমা
-const UserSchema = new mongoose.Schema({}, { strict: false, collection: 'user' });
-const User = mongoose.model('User', UserSchema);
+// Avoid Model Overwrite Errors in Serverless Redeploys
+const Project = mongoose.models.Project || mongoose.model('Project', ProjectSchema);
 
 // --- Extended Request Interface for TypeScript ---
 interface AuthRequest extends Request {
@@ -59,7 +72,7 @@ interface AuthRequest extends Request {
   };
 }
 
-// --- 🔒 Better Auth Token Middleware (TypeScript & Serverless Fixed) ---
+// --- 🔒 Better Auth Token Middleware (Fully Serverless Patch) ---
 const authenticateToken = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const authHeader = req.headers['authorization'];
@@ -70,8 +83,8 @@ const authenticateToken = async (req: AuthRequest, res: Response, next: NextFunc
       return;
     }
 
-    // 🌟 TypeScript & Serverless Fix: ডাটাবেজ কানেকশন চেক ও এসাইনমেন্ট
-    const db = mongoose.connection.db;
+    // 🌟 এখানে অন-ডিমান্ড ডাটাবেজ কানেক্ট হবে, তাই কখনো কানেকশন ড্রপ করবে না
+    const db = await connectDB();
     if (!db) {
       res.status(500).json({
         success: false,
@@ -80,7 +93,7 @@ const authenticateToken = async (req: AuthRequest, res: Response, next: NextFunc
       return;
     }
 
-    // ১. ডাটাবেজের 'session' কালেকশনে টোকেন চেক (db ভ্যারিয়েবল ব্যবহার করে)
+    // ১. ডাটাবেজের 'session' কালেকশনে টোকেন চেক
     const sessionDoc = await db.collection('session').findOne({ token: token });
 
     if (!sessionDoc) {
@@ -106,7 +119,6 @@ const authenticateToken = async (req: AuthRequest, res: Response, next: NextFunc
       // Ignore conversion error
     }
 
-    // (db ভ্যারিয়েবল ব্যবহার করে কুয়েরি)
     const userDoc = await db.collection('user').findOne({
       $or: [
         { _id: searchUserId },
@@ -133,10 +145,16 @@ const authenticateToken = async (req: AuthRequest, res: Response, next: NextFunc
     res.status(500).json({ success: false, error: 'Authentication internal error.' });
   }
 };
+
 // --- Routes ---
 
-app.get('/', (req: Request, res: Response) => {
-  res.send('ConstructIQ AI Server is running via Groq!');
+app.get('/', async (req: Request, res: Response) => {
+  try {
+    await connectDB();
+    res.send('ConstructIQ AI Server is running via Groq!');
+  } catch (err) {
+    res.status(500).send('Server status: Database Connection Failing');
+  }
 });
 
 /**
@@ -164,6 +182,9 @@ app.post('/api/projects/add', authenticateToken as any, async (req: AuthRequest,
 
     const generatedText = chatCompletion.choices[0]?.message?.content || 'Failed to generate estimate due to an AI error.';
 
+    // Ensure database is ready before creating a model document
+    await connectDB();
+
     // Save to MongoDB
     const newProject = new Project({
       title,
@@ -190,10 +211,11 @@ app.post('/api/projects/add', authenticateToken as any, async (req: AuthRequest,
 });
 
 /**
- * GET ALL PROJECTS (Explore Page) (🔒 Secured)
+ * GET ALL PROJECTS (Explore Page)
  */
-app.get('/api/projects',  async (req: AuthRequest, res: Response) => {
+app.get('/api/projects', async (req: AuthRequest, res: Response) => {
   try {
+    await connectDB();
     const { search, buildingType } = req.query;
     let query: any = {};
 
@@ -212,10 +234,11 @@ app.get('/api/projects',  async (req: AuthRequest, res: Response) => {
 });
 
 /**
- * GET SINGLE PROJECT DETAILS (🔒 Secured)
+ * GET SINGLE PROJECT DETAILS
  */
-app.get('/api/projects/:id',  async (req: AuthRequest, res: Response): Promise<void> => {
+app.get('/api/projects/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    await connectDB();
     const { id } = req.params;
     const project = await Project.findById(id);
 
@@ -235,6 +258,7 @@ app.get('/api/projects/:id',  async (req: AuthRequest, res: Response): Promise<v
  */
 app.delete('/api/projects/:id', authenticateToken as any, async (req: AuthRequest, res: Response) => {
   try {
+    await connectDB();
     const { id } = req.params;
     await Project.findByIdAndDelete(id);
     res.status(200).json({ success: true, message: 'Project deleted successfully' });
@@ -244,9 +268,9 @@ app.delete('/api/projects/:id', authenticateToken as any, async (req: AuthReques
 });
 
 /**
- * FEATURE C: AI Smart Construction Assistant / Chatbot (🔒 Secured)
+ * FEATURE C: AI Smart Construction Assistant / Chatbot
  */
-app.post('/api/ai/chat',  async (req: AuthRequest, res: Response): Promise<void> => {
+app.post('/api/ai/chat', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { message } = req.body;
 
