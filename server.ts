@@ -233,7 +233,7 @@ app.delete('/api/projects/:id', authenticateToken as any, async (req: AuthReques
 /**
  * FEATURE C: AI Smart Construction Assistant / Chatbot (🔒 Secured)
  */
-app.post('/api/ai/chat', authenticateToken as any, async (req: AuthRequest, res: Response): Promise<void> => {
+app.post('/api/ai/chat',  async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { message } = req.body;
 
